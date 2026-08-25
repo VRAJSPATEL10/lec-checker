@@ -17,7 +17,19 @@
           "registered": 115
         }
       ]
+    },
+    "20263|CSCI 599|section:30327": {
+      "isOpen": false,
+      "openSeats": 0,
+      "sections": [
+        {
+          "id": "30327",
+          "type": "Lecture",
+          "total": 170,
+          "registered": 170
+        }
+      ]
     }
   },
-  "updatedAt": "2026-08-25T20:41:46.079Z"
+  "updatedAt": "2026-08-25T20:58:54.053Z"
 }
