@@ -1,7 +1,14 @@
 #!/usr/bin/env node
 /**
  * Polls the USC Schedule of Classes API for watched courses and sends an
- * ntfy.sh push when a linkCode group flips from closed -> open.
+ * ntfy.sh push when a section (or linkCode group) flips from closed -> open.
+ *
+ * Two watch styles supported:
+ *   1. `linkCodes: ["A"]`   - for regular courses where Lecture+Lab (or Lec+Dis+Quiz)
+ *                             are bundled together by USC via linkCode.
+ *   2. `sectionIds: ["30327"]` - for Special Topics courses (599, 496, 490)
+ *                                where each section is a standalone class with
+ *                                linkCode: null and a distinct `name`.
  *
  * Config: usc-watch.json
  * State:  usc-state.json (auto-managed)
@@ -45,10 +52,6 @@ function saveState(state) {
   writeFileSync(STATE_PATH, JSON.stringify(state, null, 2) + "\n");
 }
 
-function groupKey(term, course, linkCode) {
-  return `${term}|${course}|${linkCode}`;
-}
-
 function courseLink(term, courseName) {
   const q = encodeURIComponent(courseName);
   return `https://classes.usc.edu/term/${term}/catalogue/search?searchphrase=${q}`;
@@ -65,13 +68,11 @@ async function fetchSubject(term, subject) {
   return res.json();
 }
 
-// Return the current status of a single linkCode group for a course.
-// A group is "open" iff every section is non-cancelled AND has >0 open seats.
-function evaluateGroup(course, linkCode) {
-  const sections = (course.sections || []).filter(
-    (s) => s.linkCode === linkCode
-  );
-  if (sections.length === 0) return null;
+// Given a raw list of section objects (from the USC API), return an
+// aggregated status. A group is "open" iff every section is non-cancelled
+// AND has >0 open seats.
+function evaluateGroup(sections) {
+  if (!sections || sections.length === 0) return null;
 
   let isOpen = true;
   let minOpen = Infinity;
@@ -94,14 +95,13 @@ function evaluateGroup(course, linkCode) {
   });
 
   const anyDClearance = snapshot.some((s) => s.dClearance);
+  const primary = sections.find((s) => s.rnrMode === "Lecture") || sections[0];
   const instructor = (() => {
-    const lec = sections.find((s) => s.rnrMode === "Lecture") || sections[0];
-    const i = (lec.instructors || [])[0];
+    const i = (primary.instructors || [])[0];
     return i ? `${i.firstName} ${i.lastName}`.trim() : null;
   })();
   const schedule = (() => {
-    const lec = sections.find((s) => s.rnrMode === "Lecture") || sections[0];
-    const sched = (lec.schedule || [])[0];
+    const sched = (primary.schedule || [])[0];
     if (!sched) return null;
     const days = Array.isArray(sched.days) ? sched.days.join("/") : "";
     return `${days} ${sched.startTime}-${sched.endTime}`.trim();
@@ -114,6 +114,7 @@ function evaluateGroup(course, linkCode) {
     dClearance: anyDClearance,
     instructor,
     schedule,
+    name: primary.name || null,
   };
 }
 
@@ -126,9 +127,12 @@ function shouldNotify(mode, prev, curr) {
   return !prev || prev.isOpen !== true;
 }
 
-function buildBody(watch, group) {
+function buildBody(watch, group, label) {
   const lines = [];
-  lines.push(`${group.openSeats} seat(s) open in ${watch.course} link ${watch.linkCode || "?"}`);
+  const header = group.name
+    ? `${group.openSeats} seat(s) open in ${watch.course}: ${group.name}`
+    : `${group.openSeats} seat(s) open in ${watch.course} ${label}`;
+  lines.push(header);
   if (group.instructor) lines.push(`Instructor: ${group.instructor}`);
   if (group.schedule) lines.push(`Schedule: ${group.schedule}`);
   if (group.dClearance) {
@@ -164,6 +168,32 @@ async function sendNtfy(topic, title, body, clickUrl) {
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`ntfy failed (${res.status}): ${text}`);
+  }
+}
+
+// Process one evaluated group: log, record next state, maybe queue notification.
+function processGroup(ctx, gk, group, labelForLog, titleSuffix, watchLabel, extraWatchFields) {
+  const { state, nextGroups, notifications, isFirstRun, config, term, w } = ctx;
+  const prev = state.groups?.[gk];
+  nextGroups[gk] = {
+    isOpen: group.isOpen,
+    openSeats: group.openSeats,
+    sections: group.sections.map((s) => ({
+      id: s.id, type: s.type, total: s.total, registered: s.registered,
+    })),
+  };
+  console.log(
+    `${w.course} ${labelForLog}: ${group.isOpen ? `OPEN (${group.openSeats})` : "closed"}` +
+      (prev ? ` (was ${prev.isOpen ? `open ${prev.openSeats}` : "closed"})` : " (first seen)")
+  );
+  if (!isFirstRun && shouldNotify(config.notifyMode, prev, group)) {
+    notifications.push({
+      watch: { ...w, ...extraWatchFields },
+      group,
+      label: watchLabel,
+      title: `${w.course}${titleSuffix}: ${group.openSeats} seat${group.openSeats === 1 ? "" : "s"} open`,
+      click: courseLink(term, w.course),
+    });
   }
 }
 
@@ -207,45 +237,54 @@ async function main() {
         continue;
       }
 
+      const ctx = { state, nextGroups, notifications, isFirstRun, config, term, w };
+
+      // ---- Section-ID mode (Special Topics: 599, 496, 490 etc.) ----
+      if (Array.isArray(w.sectionIds) && w.sectionIds.length) {
+        for (const sid of w.sectionIds) {
+          const section = (course.sections || []).find(
+            (s) => s.sisSectionId === sid
+          );
+          if (!section) {
+            console.warn(`Section not found: ${w.course} #${sid}`);
+            continue;
+          }
+          const group = evaluateGroup([section]);
+          const gk = `${term}|${w.course}|section:${sid}`;
+          const labelForLog = group.name ? `— ${group.name}` : `#${sid}`;
+          const titleSuffix = group.name ? ` — ${group.name}` : ` #${sid}`;
+          processGroup(ctx, gk, group, labelForLog, titleSuffix, `section ${sid}`, { sectionId: sid });
+        }
+        continue;
+      }
+
+      // ---- linkCode mode (regular courses with Lec+Lab bundles) ----
       const requestedLinks = Array.isArray(w.linkCodes) && w.linkCodes.length
         ? w.linkCodes
         : w.linkCode
         ? [w.linkCode]
-        : Array.from(new Set((course.sections || []).map((s) => s.linkCode)));
+        : Array.from(
+            new Set((course.sections || []).map((s) => s.linkCode).filter(Boolean))
+          );
 
       for (const link of requestedLinks) {
-        if (config.excludeDenLinkCode && link === "D" && !(w.linkCodes || [w.linkCode]).includes("D")) {
+        if (
+          config.excludeDenLinkCode &&
+          link === "D" &&
+          !(w.linkCodes || [w.linkCode]).includes("D")
+        ) {
           continue;
         }
-        const group = evaluateGroup(course, link);
+        const sections = (course.sections || []).filter(
+          (s) => s.linkCode === link
+        );
+        const group = evaluateGroup(sections);
         if (!group) {
           console.warn(`No sections for ${w.course} link ${link}`);
           continue;
         }
-        const gk = groupKey(term, w.course, link);
-        const prev = state.groups?.[gk];
-        nextGroups[gk] = {
-          isOpen: group.isOpen,
-          openSeats: group.openSeats,
-          sections: group.sections.map((s) => ({
-            id: s.id,
-            type: s.type,
-            total: s.total,
-            registered: s.registered,
-          })),
-        };
-        console.log(
-          `${w.course} link ${link}: ${group.isOpen ? `OPEN (${group.openSeats})` : "closed"}` +
-            (prev ? ` (was ${prev.isOpen ? `open ${prev.openSeats}` : "closed"})` : " (first seen)")
-        );
-        if (!isFirstRun && shouldNotify(config.notifyMode, prev, group)) {
-          notifications.push({
-            watch: { ...w, linkCode: link },
-            group,
-            title: `${w.course} (${link}): ${group.openSeats} seat${group.openSeats === 1 ? "" : "s"} open`,
-            click: courseLink(term, w.course),
-          });
-        }
+        const gk = `${term}|${w.course}|${link}`;
+        processGroup(ctx, gk, group, `link ${link}`, ` (${link})`, `link ${link}`, { linkCode: link });
       }
     }
   }
@@ -261,7 +300,12 @@ async function main() {
     console.log(`Would send ${notifications.length} notification(s):`);
     for (const n of notifications) {
       console.log(`  ${n.title}`);
-      console.log(buildBody(n.watch, n.group).split("\n").map((l) => `    ${l}`).join("\n"));
+      console.log(
+        buildBody(n.watch, n.group, n.label)
+          .split("\n")
+          .map((l) => `    ${l}`)
+          .join("\n")
+      );
     }
     return;
   }
@@ -276,7 +320,7 @@ async function main() {
   }
 
   for (const n of notifications) {
-    await sendNtfy(topic, n.title, buildBody(n.watch, n.group), n.click);
+    await sendNtfy(topic, n.title, buildBody(n.watch, n.group, n.label), n.click);
     console.log(`Notified: ${n.title}`);
   }
   if (notifications.length === 0) {
