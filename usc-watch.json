@@ -1,0 +1,12 @@
+{
+  "notifyMode": "on_open",
+  "excludeDenLinkCode": true,
+  "watches": [
+    {
+      "term": "20263",
+      "subject": "csci",
+      "course": "CSCI 530",
+      "linkCodes": ["A"]
+    }
+  ]
+}
