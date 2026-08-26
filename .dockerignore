@@ -1,9 +1,0 @@
-.git
-.github
-node_modules
-usc-state.json
-*.md
-.gitignore
-.dockerignore
-Dockerfile
-fly.toml
