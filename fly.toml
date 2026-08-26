@@ -1,31 +1,30 @@
 # Fly.io config for the USC seat notifier.
-# One long-running worker VM, no HTTP service, no volumes. Poll every 60s.
 #
-# Deploy:
-#   flyctl auth login
-#   flyctl launch --no-deploy --copy-config     # first time only, creates the app
-#   flyctl secrets set NTFY_TOPIC=lec-checker-b10115ed7680
+# This is a background worker — no HTTP listener, no proxy routing. One VM
+# in lax, running forever, polling every 60s. Removing the [http_service]
+# block prevents Fly's edge proxy from trying to route port 8080 to us and
+# stops it from spawning multiple machines for HA.
+#
+# Deploy / redeploy:
 #   flyctl deploy
 #
-# Update after config or code changes:
-#   flyctl deploy
+# Scale to a single machine (needed once after first deploy):
+#   flyctl scale count 1
 #
 # Watch logs:
 #   flyctl logs
 #
-# NOTE: fill in `app` below with the exact name Fly assigned (or one you pick).
+# Set / rotate the ntfy topic:
+#   flyctl secrets set NTFY_TOPIC=lec-checker-b10115ed7680
 
-app = "lec-checker"
-primary_region = "lax"  # Los Angeles — close to classes.usc.edu (~5ms)
+app = 'lec-checker'
+primary_region = 'lax'
 
 [build]
 
 [env]
-  POLL_INTERVAL_SEC = "60"
-
-# No [http_service] on purpose — this is a background worker, not a web app.
-# Fly will keep the VM running indefinitely without health checks.
+  POLL_INTERVAL_SEC = '60'
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "256mb"
+  size = 'shared-cpu-1x'
+  memory = '256mb'
