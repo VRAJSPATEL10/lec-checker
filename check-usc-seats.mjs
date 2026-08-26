@@ -10,12 +10,20 @@
  *                                where each section is a standalone class with
  *                                linkCode: null and a distinct `name`.
  *
+ * Run modes:
+ *   - One-shot (default): runs once, uses usc-state.json for state.
+ *                         Used by GitHub Actions cron.
+ *   - Loop:  set POLL_INTERVAL_SEC=<n> to loop forever with in-memory state.
+ *            Used by long-running deployments (Fly.io, Docker, systemd).
+ *            State is lost on restart => first iteration is a silent baseline.
+ *
  * Config: usc-watch.json
- * State:  usc-state.json (auto-managed)
+ * State:  usc-state.json (auto-managed; only used in one-shot mode)
  *
  * Run locally with:
  *   NTFY_TOPIC=... node check-usc-seats.mjs
- *   node check-usc-seats.mjs --dry-run   # no ntfy, no state write
+ *   node check-usc-seats.mjs --dry-run           # no ntfy, no state write
+ *   POLL_INTERVAL_SEC=10 node check-usc-seats.mjs   # loop mode, every 10s
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -197,15 +205,10 @@ function processGroup(ctx, gk, group, labelForLog, titleSuffix, watchLabel, extr
   }
 }
 
-async function main() {
-  const config = loadConfig();
-  const topic = process.env.NTFY_TOPIC;
-  if (!topic && !DRY_RUN) {
-    throw new Error("Missing NTFY_TOPIC env var (or pass --dry-run)");
-  }
-
-  const state = loadState();
-  const isFirstRun = Object.keys(state.groups || {}).length === 0;
+// Do one pass over all watches. Pure function of (config, state) — no I/O
+// beyond the USC API fetch and no ntfy sending. Returns the new state and any
+// notifications that should be dispatched by the caller.
+async function runIteration(config, state, isFirstRun) {
   const nextGroups = {};
   const notifications = [];
 
@@ -289,24 +292,46 @@ async function main() {
     }
   }
 
-  const nextState = {
-    groups: nextGroups,
-    updatedAt: new Date().toISOString(),
+  return {
+    nextState: {
+      groups: nextGroups,
+      updatedAt: new Date().toISOString(),
+    },
+    notifications,
   };
+}
+
+async function dispatchNotifications(topic, notifications) {
+  for (const n of notifications) {
+    await sendNtfy(topic, n.title, buildBody(n.watch, n.group, n.label), n.click);
+    console.log(`Notified: ${n.title}`);
+  }
+}
+
+function printDryRun(nextState, notifications) {
+  console.log("--- DRY RUN ---");
+  console.log(`Would save state with ${Object.keys(nextState.groups).length} group(s).`);
+  console.log(`Would send ${notifications.length} notification(s):`);
+  for (const n of notifications) {
+    console.log(`  ${n.title}`);
+    console.log(
+      buildBody(n.watch, n.group, n.label)
+        .split("\n")
+        .map((l) => `    ${l}`)
+        .join("\n")
+    );
+  }
+}
+
+// One-shot: reads state from disk, runs once, saves state, sends pushes.
+// Used by GitHub Actions cron.
+async function runOneShot(config, topic) {
+  const state = loadState();
+  const isFirstRun = Object.keys(state.groups || {}).length === 0;
+  const { nextState, notifications } = await runIteration(config, state, isFirstRun);
 
   if (DRY_RUN) {
-    console.log("--- DRY RUN ---");
-    console.log(`Would save state with ${Object.keys(nextGroups).length} group(s).`);
-    console.log(`Would send ${notifications.length} notification(s):`);
-    for (const n of notifications) {
-      console.log(`  ${n.title}`);
-      console.log(
-        buildBody(n.watch, n.group, n.label)
-          .split("\n")
-          .map((l) => `    ${l}`)
-          .join("\n")
-      );
-    }
+    printDryRun(nextState, notifications);
     return;
   }
 
@@ -314,17 +339,61 @@ async function main() {
 
   if (isFirstRun) {
     console.log(
-      `Baseline set with ${Object.keys(nextGroups).length} group(s). No notification on first run.`
+      `Baseline set with ${Object.keys(nextState.groups).length} group(s). No notification on first run.`
     );
     return;
   }
 
-  for (const n of notifications) {
-    await sendNtfy(topic, n.title, buildBody(n.watch, n.group, n.label), n.click);
-    console.log(`Notified: ${n.title}`);
-  }
+  await dispatchNotifications(topic, notifications);
   if (notifications.length === 0) {
     console.log("No new openings.");
+  }
+}
+
+// Loop mode: state lives in memory across iterations. Used by long-running
+// deployments (Fly.io, Docker, systemd). Set POLL_INTERVAL_SEC to enable.
+async function runLoop(config, topic, intervalSec) {
+  console.log(`Loop mode: polling every ${intervalSec}s.`);
+  let state = { groups: {} };
+  let isFirstRun = true;
+
+  while (true) {
+    const startedAt = new Date().toISOString();
+    try {
+      const { nextState, notifications } = await runIteration(config, state, isFirstRun);
+      state = nextState;
+
+      if (isFirstRun) {
+        console.log(
+          `[${startedAt}] Baseline set with ${Object.keys(state.groups).length} group(s).`
+        );
+      } else if (DRY_RUN) {
+        printDryRun(state, notifications);
+      } else if (notifications.length > 0) {
+        await dispatchNotifications(topic, notifications);
+      } else {
+        console.log(`[${startedAt}] No new openings.`);
+      }
+      isFirstRun = false;
+    } catch (err) {
+      console.error(`[${startedAt}] Iteration failed:`, err);
+    }
+    await new Promise((r) => setTimeout(r, intervalSec * 1000));
+  }
+}
+
+async function main() {
+  const config = loadConfig();
+  const topic = process.env.NTFY_TOPIC;
+  if (!topic && !DRY_RUN) {
+    throw new Error("Missing NTFY_TOPIC env var (or pass --dry-run)");
+  }
+
+  const intervalSec = parseInt(process.env.POLL_INTERVAL_SEC, 10) || 0;
+  if (intervalSec > 0) {
+    await runLoop(config, topic, intervalSec);
+  } else {
+    await runOneShot(config, topic);
   }
 }
 
