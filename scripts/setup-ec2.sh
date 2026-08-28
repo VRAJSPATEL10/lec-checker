@@ -55,14 +55,20 @@ fi
 NODE_BIN="$(command -v node)"
 echo "==> Node version: $(node --version)  path: $NODE_BIN"
 
-echo "==> Cloning $REPO_URL into $INSTALL_DIR..."
 PARENT_DIR="$(dirname "$INSTALL_DIR")"
 sudo mkdir -p "$PARENT_DIR"
 sudo chown "$SERVICE_USER:$SERVICE_USER" "$PARENT_DIR"
-if [ -d "$INSTALL_DIR/.git" ]; then
-  cd "$INSTALL_DIR"
-  git pull --ff-only
+
+if [ -f "$INSTALL_DIR/check-usc-seats.mjs" ]; then
+  echo "==> Files already present at $INSTALL_DIR"
+  if [ -d "$INSTALL_DIR/.git" ]; then
+    echo "==> Pulling latest via git..."
+    cd "$INSTALL_DIR" && git pull --ff-only || true
+  else
+    echo "==> No .git dir; assuming files were copied in (scp/rsync). Skipping fetch."
+  fi
 else
+  echo "==> Cloning $REPO_URL into $INSTALL_DIR..."
   git clone "$REPO_URL" "$INSTALL_DIR"
 fi
 
