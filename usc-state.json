@@ -2,19 +2,19 @@
   "groups": {
     "20263|CSCI 530|A": {
       "isOpen": true,
-      "openSeats": 1,
+      "openSeats": 2,
       "sections": [
         {
           "id": "30015",
           "type": "Lecture",
           "total": 115,
-          "registered": 114
+          "registered": 113
         },
         {
           "id": "30017",
           "type": "Lab",
           "total": 115,
-          "registered": 114
+          "registered": 113
         }
       ]
     },
@@ -43,5 +43,5 @@
       ]
     }
   },
-  "updatedAt": "2026-09-11T00:44:59.169Z"
+  "updatedAt": "2026-09-11T05:17:41.275Z"
 }
