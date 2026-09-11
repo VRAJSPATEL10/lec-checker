@@ -19,14 +19,14 @@
       ]
     },
     "20263|CSCI 566|A": {
-      "isOpen": true,
-      "openSeats": 1,
+      "isOpen": false,
+      "openSeats": 0,
       "sections": [
         {
           "id": "30122",
           "type": "Lecture",
           "total": 231,
-          "registered": 230
+          "registered": 231
         }
       ]
     },
@@ -43,5 +43,5 @@
       ]
     }
   },
-  "updatedAt": "2026-09-11T13:51:34.809Z"
+  "updatedAt": "2026-09-11T17:20:12.830Z"
 }
