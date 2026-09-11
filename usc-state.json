@@ -2,31 +2,31 @@
   "groups": {
     "20263|CSCI 530|A": {
       "isOpen": true,
-      "openSeats": 4,
+      "openSeats": 3,
       "sections": [
         {
           "id": "30015",
           "type": "Lecture",
           "total": 115,
-          "registered": 111
+          "registered": 112
         },
         {
           "id": "30017",
           "type": "Lab",
           "total": 115,
-          "registered": 111
+          "registered": 112
         }
       ]
     },
     "20263|CSCI 566|A": {
       "isOpen": true,
-      "openSeats": 4,
+      "openSeats": 7,
       "sections": [
         {
           "id": "30122",
           "type": "Lecture",
           "total": 235,
-          "registered": 231
+          "registered": 228
         }
       ]
     },
@@ -43,5 +43,5 @@
       ]
     }
   },
-  "updatedAt": "2026-09-11T22:00:05.387Z"
+  "updatedAt": "2026-09-11T23:56:30.788Z"
 }
