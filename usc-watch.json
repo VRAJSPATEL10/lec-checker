@@ -19,6 +19,12 @@
       "subject": "csci",
       "course": "CSCI 599",
       "sectionIds": ["30327"]
+    },
+    {
+      "term": "20271",
+      "subject": "csci",
+      "course": "CSCI 566",
+      "linkCodes": ["A"]
     }
   ]
 }
