@@ -3,18 +3,6 @@
   "excludeDenLinkCode": true,
   "watches": [
     {
-      "term": "20263",
-      "subject": "csci",
-      "course": "CSCI 530",
-      "linkCodes": ["A"]
-    },
-    {
-      "term": "20263",
-      "subject": "csci",
-      "course": "CSCI 599",
-      "sectionIds": ["30327"]
-    },
-    {
       "term": "20271",
       "subject": "csci",
       "course": "CSCI 566",
