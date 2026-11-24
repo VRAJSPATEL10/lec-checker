@@ -1,17 +1,17 @@
 {
   "groups": {
     "20271|CSCI 566|A": {
-      "isOpen": true,
-      "openSeats": 37,
+      "isOpen": false,
+      "openSeats": 0,
       "sections": [
         {
           "id": "30387",
           "type": "Lecture",
           "total": 270,
-          "registered": 233
+          "registered": 270
         }
       ]
     }
   },
-  "updatedAt": "2026-11-23T19:31:35.861Z"
+  "updatedAt": "2026-11-24T04:23:09.456Z"
 }
